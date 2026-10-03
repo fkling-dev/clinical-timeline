@@ -668,7 +668,7 @@ const THERAPY_PLAN_TEMPLATE = {
   "cycleTemplates": [
     {
       "id": "cyc2",
-      "name": "Konsolidierung (Start nur montags)",
+      "name": "Konsolidierung",
       "length": 42,
       "startDay": 1,
       "wrapEvery": 28,
