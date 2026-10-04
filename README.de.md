@@ -1,7 +1,7 @@
 # ClinicalTimeline
 
 **Klinische Verlaufsgrafiken und Therapiepläne im Browser – von den Daten zur präsentationsfertigen Abbildung.**
-Von Felix Klingler · [English version](README.md)
+Von Felix Klingler (unterstützt von Claude Sonnet 5.5) · [English version](README.md)
 
 ClinicalTimeline macht aus einem Patienten- oder Therapieverlauf eine saubere Abbildung im Stil einer Publikation: Laborkurven, Ereignisse, Zustände (z. B. Behandlungsphasen), Medikamentengaben und Zyklustabellen für Chemotherapien auf einer gemeinsamen Zeitachse. Alles läuft lokal im Browser – kein Server, kein Konto, keine Installation.
 
@@ -209,7 +209,6 @@ Oben rechts **English** oder **Deutsch** wählen. Standard ist Englisch; die Wah
 - Die gesamte Verarbeitung findet **im Browser** statt. Diagramme und Daten werden nirgends hochgeladen; es gibt kein Tracking und kein Konto.
 - Als einziger Wert wird die Oberflächensprache im Browser gespeichert (Local Storage). Projekte werden nur dort gespeichert, wo du sie speicherst.
 - Die Seite lädt zwei externe Ressourcen: Web-Schriften von Google Fonts (IBM Plex Sans, IBM Plex Mono, Carlito) und die Bibliothek PptxGenJS vom Content Delivery Network (CDN) jsDelivr für den PowerPoint-Export. Ohne Internetzugang funktioniert die App weiter, aber der PowerPoint-Export steht nicht zur Verfügung, und die Schriften fallen auf Systemschriften zurück. Für ein vollständig offlinefähiges oder streng in sich geschlossenes Setup können diese Dateien selbst gehostet werden.
-- **Keine Daten eingeben, die Patientinnen oder Patienten identifizieren, sofern die Regeln deiner Einrichtung das nicht erlauben.** Für Abbildungen werden pseudonymisierte oder fiktive Daten empfohlen.
 
 ## Browser-Unterstützung
 
@@ -266,7 +265,5 @@ Nur `http://`- und `https://`-Links werden akzeptiert; sie öffnen sich in einem
 ## Hinweis und Lizenz
 
 ClinicalTimeline ist ein Visualisierungswerkzeug und **kein Medizinprodukt**. Alle Daten und Abbildungen vor der Verwendung in klinischen, wissenschaftlichen oder patientenbezogenen Zusammenhängen prüfen.
-
-Dem Repository wurde noch keine Lizenzdatei hinzugefügt. Eine `LICENSE`-Datei (z. B. MIT) legt fest, wie andere den Code nutzen und verändern dürfen.
 
 © Felix Klingler
