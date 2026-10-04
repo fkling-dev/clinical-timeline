@@ -207,7 +207,6 @@ Choose **English** or **Deutsch** at the top right. English is the default; the 
 - All processing happens **in your browser**. Charts and data are not uploaded anywhere; there is no tracking or account.
 - The only value kept in the browser is the interface language (local storage). Projects are saved only where you save them.
 - The page loads two external resources: web fonts from Google Fonts (IBM Plex Sans, IBM Plex Mono, Carlito) and the PptxGenJS library from the jsDelivr content delivery network (CDN) for the PowerPoint export. Without internet access the app still works, but the PowerPoint export is unavailable and the fonts fall back to system fonts. For a fully offline or strictly self-contained setup, host these files yourself.
-- **Do not enter data that identifies patients unless this is permitted by your institution's rules.** Pseudonymized or fictional data is recommended for figures.
 
 ## Browser support
 
