@@ -14,5 +14,5 @@ const EXTRA_MENU_LINKS = [
   // { name: 'Mein anderes Projekt', url: 'https://example.com/' },
   { name: 'Felix Klingler Fotografien', url: 'https://felixklingler.de/' },
     { name: 'Nutricalc', url: 'https://fkling-dev.github.io/nutricalc/' },
-  { name: 'My Github', url: 'https://github.com/fkling-dev' }
+  { name: 'My Github', url: 'https://github.com/fkling-dev?tab=repositories' }
 ];
