@@ -2014,6 +2014,21 @@ window.addEventListener('beforeunload', (e) => {
 });
 
 /* ---------- Init ---------- */
+// URL-Parameter ?preview=N laedt beim Start direkt die N-te Diagrammvorlage (Menue "Vorlagen"):
+//   ?preview=1 = Klinische Verlaufsgrafik, ?preview=2 = Therapieplan Verlauf.
+// Rein clientseitig (kein Server noetig); ohne oder mit ungueltigem Parameter erscheint die normale Startseite.
+function applyPreviewFromUrl() {
+  let v = null;
+  try { v = new URLSearchParams(window.location.search).get('preview'); } catch (e) { return; }
+  if (v == null || !/^\s*\d+\s*$/.test(v)) return;
+  const tpl = CHART_TEMPLATES[parseInt(v, 10) - 1];
+  if (!tpl) return;
+  state = tpl.build();
+  currentProjectHandle = null;
+  currentProjectHandleName = null;
+  activeTab = 'general';
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loadInput').addEventListener('change', (e) => {
     if (e.target.files[0]) loadJSONFile(e.target.files[0]);
@@ -2053,6 +2068,7 @@ window.addEventListener('DOMContentLoaded', () => {
     refreshAll();
   });
   applyStaticI18n();
+  applyPreviewFromUrl();
   refreshAll();
   markClean(); // Ausgangszustand (leer bzw. gerade erst geladen) gilt nicht als "ungespeicherte Aenderung"
 });
