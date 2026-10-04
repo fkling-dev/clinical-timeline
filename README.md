@@ -1,7 +1,7 @@
 # ClinicalTimeline
 
 **Clinical course charts and treatment schedules in the browser – from data to a presentation-ready figure.**
-By Felix Klingler · [Deutsche Version](README.de.md)
+By Felix Klingler (supported by Claude Sonnet 5.5) · [Deutsche Version](README.de.md)
 
 ClinicalTimeline turns a patient or treatment course into a clean, publication-style figure: laboratory curves, events, states (e.g. treatment phases), drug administrations, and chemotherapy cycle tables on one time axis. Everything runs locally in your browser – no server, no account, no installation.
 
@@ -264,7 +264,5 @@ Only `http://` and `https://` links are accepted; they open in a new tab. If the
 ## Disclaimer and license
 
 ClinicalTimeline is a visualization tool and **not a medical device**. Check all data and figures before using them in clinical, scientific or patient-facing contexts.
-
-No license file has been added to this repository yet. Add a `LICENSE` file (for example MIT) to define how others may use and modify the code.
 
 © Felix Klingler
