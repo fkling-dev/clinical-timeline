@@ -215,6 +215,22 @@ function cycleItemDateTs(s, it) {
   if (m != null) return m + ((Number(it.start) || 0) - masterDayOf(s)) * 86400000;
   return parseISODate(it.date);
 }
+// Heutiges Datum (lokal) als UTC-Zeitstempel; Tag auf der X-Achse, auf den "heute" faellt: aus dem Datum der
+// X-Achse (Master-Datum) bzw., falls keines gesetzt ist, aus dem ersten Zyklus mit eigenem Startdatum. Sonst null.
+function todayTs() { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()); }
+function todayDayOf(s) {
+  const t = todayTs();
+  const m = masterDateTs(s);
+  if (m != null) return masterDayOf(s) + Math.round((t - m) / 86400000);
+  for (const r of (s.rows || [])) {
+    if (r.kind !== 'cycle') continue;
+    for (const it of (r.items || [])) {
+      const ts = parseISODate(it.date);
+      if (ts != null) return (Number(it.start) || 0) + Math.round((t - ts) / 86400000);
+    }
+  }
+  return null;
+}
 function isoFromTs(t) { return new Date(t).toISOString().slice(0, 10); }
 function noteLetter(i) {
   const A = n => String.fromCharCode(65 + n);
@@ -249,7 +265,7 @@ function layoutRowsOf(s) {
         if (ci.dateMarkEnd) addMark('e', dur - 1);
       }
       if (asMarker) items.push({ id: ci.id, day: start, label, hl: false, hlColor: color, hlLabel: '', colorOverride: color, marks });
-      else items.push({ id: ci.id, color, start, end: start + cycleDuration(tpl) - 1, label, hatch: false, marks, pause: !!ci.showPause });
+      else items.push({ id: ci.id, color, start, end: start + cycleDuration(tpl) - 1, label, hatch: !!ci.hatch, marks, pause: !!ci.showPause });
     });
     // Darstellung "Markierungssymbol": Symbol am Starttag wie in einer Ereignis-Zeile
     if (asMarker) return { id: r.id, kind: 'event', isCycle: true, name: r.name, visible: r.visible, symbol: r.symbol || 'triangle', color: '#1E2A24', textSize: Number(r.textSize) || 13, symbolSize: Number(r.symbolSize) || 14, items };
@@ -1747,6 +1763,9 @@ function styleDefaults() {
     stateLabelSize: 13,
     stateArrowGap: 4,
     stateEdgeMode: 'triangles', // none | triangles | trianglesOut | whisker | arrow
+    showToday: false,
+    todaySize: 21,
+    todayColor: '#D62828',
     markerLineWidth: 2,
     markerBadgeSize: 13,
     markerListLayout: 'inline',
@@ -2016,6 +2035,7 @@ function migrateState(data) {
       if (it.showTable == null) it.showTable = false;
       if (it.showDates == null) it.showDates = false;
       if (it.showPause == null) it.showPause = false;
+      if (it.hatch == null) it.hatch = false;
       if (!Array.isArray(it.dayNotes)) it.dayNotes = [];
       it.dayNotes.forEach(n => { if (!n.id) n.id = uid('cyn'); n.day = Number(n.day); if (n.text == null) n.text = ''; });
       if (it.dateMarkStart == null) it.dateMarkStart = false;
@@ -2452,6 +2472,12 @@ function computeLayoutAtWidth(s, W, extraX) {
     activeSegs.push(sg);
   });
   const preDayVisible = (d) => activeSegs.some(sg => d >= Number(sg.start) && d <= Number(sg.end));
+  // "Heute"-Dreieck: eigener Streifen zwischen Diagrammflaeche und X-Achse (Dreieck + Abstand oben und unten),
+  // damit es weder an der Achse klebt noch Kurven/Gitter beruehrt. Nur wenn es tatsaechlich sichtbar ist.
+  const todayDay = s.showToday ? todayDayOf(s) : null;
+  const todayTri = Math.max(2, (Number(s.todaySize) || 21) * FS);
+  const todayMargin = Math.max(3 * FS, todayTri * 0.3);
+  const todayStrip = (todayDay != null && preDayVisible(todayDay)) ? todayTri + 2 * todayMargin : 0;
   // Legendeneintraege der Markierungsvorlagen (Quadrat + Text) - stehen in der Liste
   // hinter den nummerierten Markierungslinien.
   const styleLegend = showMarkersSection ? collectStyleLegend(s, visibleSeries, preDayVisible, visibleRows) : [];
@@ -2511,13 +2537,13 @@ function computeLayoutAtWidth(s, W, extraX) {
   // Fußzeile tatsaechlich benoetigen - so kann bei sehr vielen Inhalten die
   // Canvas-Hoehe automatisch wachsen, statt dass sich unten alles ueberlappt.
   const aspectH = Math.round(W * s.aspectH / s.aspectW);
-  const neededH = chartTop + minChartH + usedBottom;
+  const neededH = chartTop + minChartH + usedBottom + todayStrip;
   const H = Math.max(aspectH, neededH);
   const outputW = Math.max(200, Math.round(Number(s.canvasWidth) || REF_W));
   const outputH = Math.round(outputW * H / W);
 
-  let chartBottom = showChartSection ? (H - usedBottom) : chartTop;
-  const xAxisTop = chartBottom;
+  let chartBottom = showChartSection ? (H - usedBottom - todayStrip) : chartTop;
+  const xAxisTop = chartBottom + todayStrip;
   const xAxisBottom = xAxisTop + xAxisH;
   const tickLabelY = xAxisTop + tickLabelYOffset;
   const segLabelY = xAxisTop + segLabelYOffset;
@@ -3066,6 +3092,13 @@ function computeLayoutAtWidth(s, W, extraX) {
     breaks.push({ x: (segs[i].px1 + segs[i + 1].px0) / 2, y0: chartTop, y1: xAxisBottom });
   }
 
+  // "Heute"-Markierung (rotes Dreieck oberhalb der primaeren X-Achse), nur im sichtbaren Bereich.
+  let todayMark = null;
+  if (s.showToday) {
+    const td = todayDayOf(s);
+    if (todayStrip > 0 && td != null && segmentIndexForDay(td) >= 0) todayMark = { x: dayToX(td), day: td, size: todayTri, margin: todayMargin };
+  }
+
   return {
     W, H, outputW, outputH, pad, titleY, legendY, chartTop, chartBottom, plotLeft, plotRight, plotWidth,
     xAxisTop, xAxisBottom, rowsTop, rowsBottom, segs, y1r, y2r, y1Ticks, y2Ticks, yToPx, showY2, FS,
@@ -3073,7 +3106,7 @@ function computeLayoutAtWidth(s, W, extraX) {
     refLines, refLinesSkipped, tickHiddenByRefLabel,
     labelColW, y2LabelColW, yTicksW, y2TicksW, tickLabelY, segLabelY, xAxisLabelY, contentLeftX,
     contentRows, breaks, seriesLayout, annotations, annotationsY, cycleTables, cycleTablesH, annotationList, badgeR, footerY, legendLayout,
-    bottomY: rowY, outOfRangeCount, hiddenCount, skippedSegmentCount
+    bottomY: rowY, outOfRangeCount, hiddenCount, skippedSegmentCount, todayMark
   };
 }
 
@@ -3232,8 +3265,8 @@ function renderSVG(s) {
   }
 
   const axW = s.axisLineWidth;
-  g.push(`<line x1="${L.plotLeft}" y1="${L.chartTop}" x2="${L.plotLeft}" y2="${L.chartBottom}" stroke="${s.axisColor}" stroke-width="${axW}"/>`);
-  if (L.showY2) g.push(`<line x1="${L.plotRight}" y1="${L.chartTop}" x2="${L.plotRight}" y2="${L.chartBottom}" stroke="${s.axisColor}" stroke-width="${axW}"/>`);
+  g.push(`<line x1="${L.plotLeft}" y1="${L.chartTop}" x2="${L.plotLeft}" y2="${L.xAxisTop}" stroke="${s.axisColor}" stroke-width="${axW}"/>`);
+  if (L.showY2) g.push(`<line x1="${L.plotRight}" y1="${L.chartTop}" x2="${L.plotRight}" y2="${L.xAxisTop}" stroke="${s.axisColor}" stroke-width="${axW}"/>`);
 
   L.y1Ticks.forEach(v => {
     const y = L.yToPx(v, L.y1r);
@@ -3340,6 +3373,10 @@ function renderSVG(s) {
     });
   }
   drawXAxisSVG(L.xAxisTop, L.tickLabelY, L.segLabelY, L.xAxisLabelY);
+  if (L.todayMark) {
+    const th = L.todayMark.size, tx = L.todayMark.x, ty = L.xAxisTop - L.todayMark.margin;
+    g.push(`<polygon points="${tx},${ty} ${tx - th * 0.6},${ty - th} ${tx + th * 0.6},${ty - th}" fill="${s.todayColor || '#D62828'}" style="pointer-events:none;"/>`);
+  }
   if (L.showBottomAxis) {
     drawXAxisSVG(L.bottomAxisTop, L.bottomTickLabelY, L.bottomSegLabelY, L.bottomAxisLabelY);
   }
@@ -3956,8 +3993,8 @@ async function exportPPTX() {
     });
   }
 
-  addSegmentLine(L.plotLeft, L.chartTop, L.plotLeft, L.chartBottom, state.axisColor, state.axisLineWidth);
-  if (L.showY2) addSegmentLine(L.plotRight, L.chartTop, L.plotRight, L.chartBottom, state.axisColor, state.axisLineWidth);
+  addSegmentLine(L.plotLeft, L.chartTop, L.plotLeft, L.xAxisTop, state.axisColor, state.axisLineWidth);
+  if (L.showY2) addSegmentLine(L.plotRight, L.chartTop, L.plotRight, L.xAxisTop, state.axisColor, state.axisLineWidth);
 
   L.y1Ticks.forEach(v => {
     const y = L.yToPx(v, L.y1r);
@@ -4068,6 +4105,10 @@ async function exportPPTX() {
     });
   }
   drawXAxisPPTX(L.xAxisTop, L.tickLabelY, L.segLabelY, L.xAxisLabelY);
+  if (L.todayMark) {
+    const th = L.todayMark.size, tx = L.todayMark.x, ty = L.xAxisTop - L.todayMark.margin;
+    addPolygon([[tx, ty], [tx - th * 0.6, ty - th], [tx + th * 0.6, ty - th]], state.todayColor || '#D62828', null);
+  }
   if (L.showBottomAxis) {
     drawXAxisPPTX(L.bottomAxisTop, L.bottomTickLabelY, L.bottomSegLabelY, L.bottomAxisLabelY);
   }

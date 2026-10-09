@@ -620,7 +620,7 @@ const STYLE_FIELDS = [
   'showLegend', 'showGrid', 'rowGridVertical', 'rowGridHorizontal',
   'plotPadding', 'segmentGap',
   'axisLineWidth', 'axisColor', 'xTickLabelSize', 'yTickLabelSize', 'segmentLabelSize', 'showSegmentLabels', 'axisLabelSize', 'axisLabelStyle',
-  'segmentLabelGap', 'xAxisLabelGap', 'axisToRowsGap', 'bottomAxisGap', 'showCycleSection', 'cycleTableSize', 'cycleTableGap', 'showBottomAxis', 'rowKindGap', 'stateRowGap', 'stateLabelSize', 'stateEdgeMode', 'stateArrowGap',
+  'segmentLabelGap', 'xAxisLabelGap', 'axisToRowsGap', 'bottomAxisGap', 'showCycleSection', 'cycleTableSize', 'cycleTableGap', 'showBottomAxis', 'rowKindGap', 'stateRowGap', 'stateLabelSize', 'stateEdgeMode', 'stateArrowGap', 'todaySize', 'todayColor',
   'markerLineWidth', 'markerBadgeSize', 'markerListLayout', 'markerListFontSize', 'markerListGapTop', 'markerListGapBottom',
   'footerSize', 'footerColor', 'footerAlign', 'footerGapNoMarkers', 'leftEdgeMode',
   'alignAxisMin', 'watermarkEnabled'
@@ -696,6 +696,12 @@ function renderTabs() {
     else if (r > nav.scrollLeft + nav.clientWidth) nav.scrollLeft = r - nav.clientWidth + 8;
   }
   const panel = document.getElementById('tabpanel');
+  // Scroll-Position von Panel und Wertetabellen erhalten (sonst springt die Ansicht bei jedem Neuaufbau nach oben).
+  const keepScroll = renderedTabId === activeTab;
+  const prevPanelTop = panel.scrollTop;
+  const prevTables = {};
+  panel.querySelectorAll('.point-table[data-owner]').forEach(t => { prevTables[t.getAttribute('data-owner')] = t.scrollTop; });
+  renderedTabId = activeTab;
   panel.innerHTML = '';
   panel.appendChild(
     activeTab === 'general' ? renderGeneralPanel() :
@@ -708,6 +714,49 @@ function renderTabs() {
     activeTab === 'yref' ? renderYRefPanel() :
     renderRowsPanel()
   );
+  if (keepScroll) {
+    panel.scrollTop = prevPanelTop;
+    panel.querySelectorAll('.point-table[data-owner]').forEach(t => {
+      const v = prevTables[t.getAttribute('data-owner')];
+      if (v != null) t.scrollTop = v;
+    });
+  }
+}
+let renderedTabId = null;
+// Nach "+ Wert": Tabelle ans Ende scrollen und das Tag-Feld des neuen Eintrags aktivieren.
+function focusLastPoint(ownerId) {
+  const t = document.querySelector('.point-table[data-owner="' + ownerId + '"]');
+  if (!t) return;
+  t.scrollTop = t.scrollHeight;
+  const last = t.lastElementChild;
+  const inp = last && last.querySelector('input');
+  if (last && last.scrollIntoView) last.scrollIntoView({ block: 'nearest' });
+  if (inp) { inp.focus(); if (inp.select) inp.select(); }
+}
+// Alle Werte als Text (Tag <Tab> Wert, ein Paar je Zeile, Dezimalkomma) in die Zwischenablage - direkt in Excel einfügbar
+// und mit „Aus Excel einfügen“ wieder importierbar.
+function copyPointsButton(sr) {
+  const btn = el('button', { class: 'btn secondary small', title: 'Alle Werte (Tag / Wert) in die Zwischenablage kopieren – einfügbar in Excel' }, ['Werte kopieren']);
+  btn.addEventListener('click', () => {
+    const fmt = n => String(Number(n)).replace('.', ',');
+    const text = (sr.points || []).filter(p => isFinite(Number(p.day)) && isFinite(Number(p.value)) && String(p.value) !== '')
+      .slice().sort((a, b) => Number(a.day) - Number(b.day)).map(p => fmt(p.day) + '\t' + fmt(p.value)).join('\n');
+    const done = ok => {
+      btn.textContent = tr(ok ? 'Kopiert ✓' : 'Kopieren nicht möglich');
+      setTimeout(() => { btn.textContent = tr('Werte kopieren'); }, 1600);
+    };
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove(); done(ok);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => done(true), fallback);
+    else fallback();
+  });
+  return btn;
 }
 
 /* ---------- Allgemein (Inhalte: Titel/Texte/Daten-Ein-Aus, nicht Stil) ---------- */
@@ -917,7 +966,7 @@ function loadJSONFile(file) {
    Beide Tabs werden aus DERSELBEN Struktur aufgebaut (buildStyleTab). Jede Einstellung hat
    eine feste interne Nummer (nur zur Zuordnung, nicht sichtbar); EXPERT_NUMS legt fest, welche
    im Tab „Experteneinstellungen“ statt im Tab „Stil“ erscheinen. */
-const EXPERT_NUMS = new Set([75, 10, 11, 12, 13, 14, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 32, 33, 35, 45, 51, 56, 62]);
+const EXPERT_NUMS = new Set([76, 77, 75, 10, 11, 12, 13, 14, 19, 21, 22, 23, 24, 25, 26, 27, 28, 29, 32, 33, 35, 45, 51, 56, 62]);
 
 function renderStylePanel() { return buildStyleTab(false); }
 function renderExpertPanel() { return buildStyleTab(true); }
@@ -1069,6 +1118,9 @@ function buildStyleTab(expert) {
 
   Big('Zyklustabellen', 74, state.showCycleSection !== false, v => { state.showCycleSection = v; refreshAll(); });
   S(72, () => sizeField('Tabellentext', sliderInput(state.cycleTableSize, 8, 24, 0.5, v => { state.cycleTableSize = Math.max(6, v); rerender(); }, { unit: 'pt' })));
+  if (expert) Big('Heute-Markierung (Dreieck an der X-Achse)', 78, !!state.showToday, v => { state.showToday = v; refreshAll(); });
+  S(76, () => sizeField('Größe', sliderInput(state.todaySize, 4, 40, 0.5, v => { state.todaySize = Math.max(2, v); rerender(); }, { unit: 'px' })));
+  S(77, () => colorField('Farbe', colorInput(state.todayColor || '#D62828', v => { state.todayColor = v; rerender(); })));
   S(73, () => gapField('Abstand zwischen Tabellen', sliderInput(state.cycleTableGap, 0, 80, 1, v => { state.cycleTableGap = Math.max(0, v); rerender(); }, { unit: 'px' })));
 
   /* ===================== MARKIERUNGEN ===================== */
@@ -1347,6 +1399,7 @@ function renderSegmentsPanel() {
   c.appendChild(field('Datum an diesem Tag', dateInput(state.masterDate || '', v => { state.masterDate = v; refreshAll(); })));
   if (masterDateTs(state) != null) {
     c.appendChild(el('button', { class: 'btn ghost small', onclick: () => { state.masterDate = ''; refreshAll(); } }, ['Datum entfernen']));
+    const tf = todayToggleField(); if (tf) c.appendChild(tf);
   }
   c.appendChild(el('div', { class: 'divider' }));
 
@@ -1462,7 +1515,7 @@ function renderSeriesPanel() {
     card.appendChild(r3);
 
     card.appendChild(el('div', { class: 'section-title small' }, ['Messwerte (Tag / Wert)']));
-    const table = el('div', { class: 'point-table' });
+    const table = el('div', { class: 'point-table', 'data-owner': sr.id });
     sr.points.forEach((p, pi) => {
       const row = el('div', { class: 'point-row' });
       row.appendChild(numInputCommit(p.day, v => { p.day = v; rerender(); }, () => sortPointsAndRefresh(sr)));
@@ -1477,11 +1530,13 @@ function renderSeriesPanel() {
         const lastDay = sr.points.length ? sr.points[sr.points.length - 1].day : 0;
         sr.points.push({ day: lastDay + 1, value: sr.points.length ? sr.points[sr.points.length - 1].value : 0 });
         refreshAll();
+        focusLastPoint(sr.id);
       }
     }, ['+ Messwert']));
     btnRow.appendChild(el('button', {
       class: 'btn secondary small', onclick: (e) => { const r = e.target.getBoundingClientRect(); openPastePopover(sr, r.left, r.top); }
     }, ['Aus Excel einfügen']));
+    btnRow.appendChild(copyPointsButton(sr));
     card.appendChild(btnRow);
     c.appendChild(card);
   });
@@ -1821,6 +1876,30 @@ function renderCyclesPanel() {
 }
 
 // Zyklus-Zeile im Tab "Ereignisse & Zustände": Eintraege (Vorlage + Starttag + optional Datum)
+// Wird ein Startdatum eingegeben, ist dieser Zyklus der aktuelle: alle anderen Zyklen werden schraffiert (einzeln wieder abwählbar).
+// Das Startdatum bleibt dabei nur bei diesem Zyklus stehen (bei den anderen wird es gelöscht), damit es nicht zu
+// widersprüchlichen Daten und einem falschen „Heute“-Dreieck kommt.
+function hatchOtherCycles(cur) {
+  state.rows.forEach(r => {
+    if (r.kind !== 'cycle') return;
+    (r.items || []).forEach(o => {
+      if (o === cur) return;
+      o.hatch = true;
+      o.date = '';
+      o.showDates = false;
+    });
+  });
+  cur.hatch = false;
+}
+function onCycleDateEntered(it, v) {
+  it.date = v;
+  if (!parseISODate(v)) it.showDates = false; else hatchOtherCycles(it);
+}
+// Heute-Markierung (Dreieck an der X-Achse): nur wählbar, wenn sich aus einem Datum ein Tag berechnen lässt.
+function todayToggleField() {
+  if (todayDayOf(state) == null) return null;
+  return field('„Heute“ als Dreieck an der X-Achse anzeigen', checkInput(state.showToday, v => { state.showToday = v; rerender(); }));
+}
 function buildCycleItemCard(r, it, ii) {
   const tpls = state.cycleTemplates || [];
   const tpl = findCycleTemplate(state, it.templateId);
@@ -1831,12 +1910,14 @@ function buildCycleItemCard(r, it, ii) {
   box.appendChild(head);
   box.appendChild(field('Vorlage', selectInput(it.templateId, tpls.map(t => ({ value: t.id, label: t.name || 'Zyklus' })), v => { it.templateId = v; refreshAll(); })));
   box.appendChild(field('Starttag im Diagramm', numInput(it.start, v => { it.start = Math.round(v); rerender(); }, 1)));
-  box.appendChild(cycleDateField(it, v => { it.date = v; if (!parseISODate(v)) it.showDates = false; refreshAll(); }));
+  box.appendChild(cycleDateField(it, v => { onCycleDateEntered(it, v); refreshAll(); }));
+  { const tf = todayToggleField(); if (tf) box.appendChild(tf); }
   const lbl = textInput(it.label, v => { it.label = v; rerender(); });
   lbl.placeholder = tpl ? tpl.name : '';
   box.appendChild(field('Beschriftung', lbl));
   box.appendChild(colorField('Farbe', colorInput(it.color || (tpl ? tpl.color : '#3B5BA5'), v => { it.color = v; rerender(); })));
   if (r.display !== 'marker') {
+    box.appendChild(field('Schraffiert darstellen', checkInput(it.hatch, v => { it.hatch = v; rerender(); })));
     box.appendChild(field('Pause bis zum nächsten Zyklus einblenden', checkInput(it.showPause, v => { it.showPause = v; rerender(); })));
   }
   box.appendChild(field('Tabelle unterhalb anzeigen', checkInput(it.showTable, v => { it.showTable = v; rerender(); })));
@@ -1855,6 +1936,7 @@ function newCycleItemFor(r) {
     start: last && lastTpl ? (Number(last.start) || 0) + cycleDuration(lastTpl) : 0,
     date: '', label: '', color: '', showTable: false, showDates: false, showPause: false,
     dayNotes: [], dateMarkStart: false, dateMarkEnd: false, dateMarkDayOn: false,
+    hatch: false,
     dateMarkDay: (last && lastTpl) ? cycleStartDay(lastTpl) : cycleStartDay(findCycleTemplate(state, tpls[0].id))
   };
 }
@@ -1874,13 +1956,15 @@ function onCycleClick(rowId, itemId, ax, ay) {
       l.appendChild(checkInput(value, onChange)); l.appendChild(el('span', {}, [text]));
       return l;
     };
+    if (row.display !== 'marker') holder.appendChild(chk('Schraffiert darstellen', !!it.hatch, v => { it.hatch = v; rerender(); if (activeTab === 'rows') renderTabs(); }));
     if (row.display !== 'marker') holder.appendChild(chk('Pause bis zum nächsten Zyklus einblenden', !!it.showPause, v => { it.showPause = v; rerender(); if (activeTab === 'rows') renderTabs(); }));
     holder.appendChild(chk('Zyklustabelle unterhalb anzeigen', !!it.showTable, v => { it.showTable = v; rerender(); if (activeTab === 'rows') renderTabs(); }));
     holder.appendChild(cycleDateField(it, v => {
-      it.date = v; if (!parseISODate(v)) it.showDates = false;
+      onCycleDateEntered(it, v);
       rerender(); if (activeTab === 'rows') renderTabs();
       build(); if (currentPopover) placePopover(currentPopover, ax, ay);
     }));
+    { const tf = todayToggleField(); if (tf) holder.appendChild(tf); }
     if (cycleItemDateTs(state, it) != null) {
       holder.appendChild(chk('Absolute Daten in der Tabelle', !!it.showDates, v => { it.showDates = v; rerender(); if (activeTab === 'rows') renderTabs(); }));
     }
@@ -1971,7 +2055,7 @@ function renderRowsPanel() {
         card.appendChild(field('Bei Überlappung versetzen', checkInput(r.stagger, v => { r.stagger = v; rerender(); })));
 
         card.appendChild(el('div', { class: 'section-title small' }, ['Werte (Tag / Wert)']));
-        const table = el('div', { class: 'point-table' });
+        const table = el('div', { class: 'point-table', 'data-owner': r.id });
         r.points.forEach((p, pi) => {
           const row = el('div', { class: 'point-row' });
           row.appendChild(numInputCommit(p.day, v => { p.day = v; rerender(); }, () => sortPointsAndRefresh(r)));
@@ -1986,11 +2070,13 @@ function renderRowsPanel() {
             const last = r.points.length ? r.points[r.points.length - 1] : { day: -1, value: 0 };
             r.points.push({ day: Number(last.day) + 1, value: last.value });
             refreshAll();
+            focusLastPoint(r.id);
           }
         }, ['+ Wert']));
         vbtn.appendChild(el('button', {
           class: 'btn secondary small', onclick: (e) => { const rc = e.target.getBoundingClientRect(); openPastePopover(r, rc.left, rc.top); }
         }, ['Aus Excel einfügen']));
+        vbtn.appendChild(copyPointsButton(r));
         card.appendChild(vbtn);
       } else if (r.kind === 'event') {
         card.appendChild(field('Bezeichnung', textInput(r.name, v => { r.name = v; rerender(); })));
