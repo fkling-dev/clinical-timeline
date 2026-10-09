@@ -405,30 +405,93 @@ function markStyleSwatch(ms, size) {
   return svg;
 }
 
-/* ----- Ereignis-Highlight (Klick zum Hervorheben) ----- */
+/* ----- Ereignis: Markierungsvorlage + optionale Markierungslinie (Klick auf das Symbol) ----- */
 function onEventClick(rowId, itemId, ax, ay) {
   const row = findRow(rowId); const it = findItem(row, itemId);
   if (!row || !it) return;
-  if (!it.hl) {
-    it.hl = true;
-    if (!it.hlColor) it.hlColor = row.color;
-    rerender();
-    openEventPopover(row, it, ax, ay);
-  } else {
-    it.hl = false;
-    closePopover();
-    rerender();
-  }
+  // Erneuter Klick auf dasselbe Ereignis schliesst das Menue.
+  if (currentPopover && currentPopover.dataset.itemId === itemId) { closePopover(); return; }
+  openEventPopover(row, it, ax, ay);
+}
+// Auswahlliste der Markierungsvorlagen (gruppiert wie im Messpunkt-Menue); Auswahl per onPick(id) ('' = Standard).
+function markStyleChoiceList(currentId, defaultOption, onPick, onLayout) {
+  const list = el('div', { class: 'ms-choice-list' });
+  const groups = markStyleGroups();
+  const multi = groups.length > 1;
+  const makeItem = ms => {
+    const isSel = (currentId || '') === ms.id;
+    const item = el('label', { class: 'ms-choice' + (isSel ? ' selected' : '') });
+    const radio = el('input', { type: 'radio', name: 'ms-choice-ev' });
+    radio.checked = isSel;
+    radio.addEventListener('change', () => onPick(ms.id));
+    item.appendChild(radio);
+    item.appendChild(markStyleSwatch(ms, 16));
+    const txt = el('span', { class: 'ms-choice-text' }, [ms.name || 'Vorlage']);
+    if (ms.label) txt.appendChild(el('span', { class: 'ms-choice-label' }, [ms.label.replace(/\r\n|\r|\n/g, ' ')]));
+    item.appendChild(txt);
+    return item;
+  };
+  const renderList = () => {
+    list.innerHTML = '';
+    list.appendChild(makeItem(defaultOption));
+    groups.forEach(g => {
+      const open = !multi || !collapsedPopoverGroups.has(g.key);
+      if (multi) {
+        const selected = g.items.find(m => m.id === (currentId || ''));
+        list.appendChild(el('button', {
+          class: 'ms-group-head', title: open ? 'Einklappen' : 'Aufklappen',
+          onclick: () => {
+            if (open) collapsedPopoverGroups.add(g.key); else collapsedPopoverGroups.delete(g.key);
+            renderList();
+            if (onLayout) onLayout();
+          }
+        }, [
+          el('span', { class: 'expand-arrow' }, [open ? '▾' : '▸']),
+          el('span', { class: 'ms-group-name' }, [g.kind === 'file' ? '📄 ' + g.label : g.label]),
+          (!open && selected) ? markStyleSwatch(selected, 12) : null,
+          el('span', { class: 'ms-usage' }, [String(g.items.length)])
+        ]));
+      }
+      if (open) g.items.forEach(ms => list.appendChild(makeItem(ms)));
+    });
+  };
+  renderList();
+  return list;
 }
 function openEventPopover(row, it, ax, ay) {
   const box = el('div', { class: 'popover-body' });
   box.appendChild(el('div', { class: 'popover-title' }, [it.label || 'Ereignis']));
-  box.appendChild(field('Symbolfarbe', colorInput(it.hlColor, v => { it.hlColor = v; rerender(); })));
-  box.appendChild(field('Beschriftung', textAreaInput(it.hlLabel, v => { it.hlLabel = v; rerender(); })));
+
+  box.appendChild(el('div', { class: 'popover-subtitle' }, ['Markierungsdarstellung']));
+  const defaultOption = { id: '', name: 'Standard (Einstellungen der Zeile)', fill: row.color, border: null, borderWidth: 0, label: '' };
+  box.appendChild(markStyleChoiceList(it.styleId || '', defaultOption, id => {
+    if (id) it.styleId = id; else delete it.styleId;
+    rerender();
+    if (activeTab === 'markstyles' || activeTab === 'rows') renderTabs(); // Zähler bzw. Gruppenfarben aktualisieren
+    openEventPopover(row, it, ax, ay);
+  }, () => { if (currentPopover) placePopover(currentPopover, ax, ay); }));
+  if (!(state.markStyles || []).length) box.appendChild(el('div', { class: 'hint small' }, ['Noch keine Vorlagen angelegt.']));
+
+  const lineRow = el('label', { class: 'popover-check' });
+  lineRow.appendChild(checkInput(it.hl, v => {
+    it.hl = v;
+    if (v && !it.hlColor) it.hlColor = row.color;
+    rerender();
+    openEventPopover(row, it, ax, ay);
+  }));
+  lineRow.appendChild(el('span', {}, ['Markierungslinie anzeigen']));
+  box.appendChild(lineRow);
+  if (it.hl) {
+    // Mit Vorlage übernimmt die Linie deren Randfarbe; ohne Vorlage gilt die gewählte Symbolfarbe.
+    if (!it.styleId) box.appendChild(field('Symbolfarbe', colorInput(it.hlColor || row.color, v => { it.hlColor = v; rerender(); })));
+    box.appendChild(field('Beschriftung', textAreaInput(it.hlLabel, v => { it.hlLabel = v; rerender(); })));
+  }
   box.appendChild(el('button', {
-    class: 'btn ghost small', onclick: () => { it.hl = false; closePopover(); rerender(); }
-  }, ['Hervorhebung entfernen']));
+    class: 'btn ghost small', onclick: () => { closePopover(); activeTab = 'markstyles'; refreshAll(); }
+  }, ['Vorlagen bearbeiten …']));
+  box.appendChild(el('button', { class: 'btn ghost small', onclick: closePopover }, ['Schließen']));
   openPopover(ax, ay, box);
+  if (currentPopover) currentPopover.dataset.itemId = it.id;
 }
 
 /* ----- Werte-Zeile: Klick auf einen Wert = Markierung (analog Ereignis) ----- */
@@ -1044,6 +1107,7 @@ function buildStyleTab(expert) {
 function countMarkStyleUsage(id) {
   let n = 0;
   state.series.forEach(sr => sr.points.forEach(p => { if (p.styleId === id) n++; }));
+  state.rows.forEach(r => { if (r.kind === 'event') (r.items || []).forEach(it => { if (it.styleId === id) n++; }); });
   return n;
 }
 
@@ -1151,6 +1215,12 @@ function buildMarkStyleCard(ms) {
     class: 'icon-btn danger', title: 'Vorlage löschen', onclick: () => {
       if (used && !confirm(`Diese Vorlage wird an ${used} Messpunkt(en) verwendet. Trotzdem löschen? Die Punkte erhalten wieder die Standarddarstellung.`)) return;
       state.series.forEach(sr => sr.points.forEach(p => { if (p.styleId === ms.id) delete p.styleId; }));
+      state.rows.forEach(r => {
+        if (r.kind !== 'event') return;
+        (r.items || []).forEach(it => { if (it.styleId === ms.id) delete it.styleId; });
+        if (r.groupBgColors) delete r.groupBgColors[ms.id];
+        if (r.groupBgOff) delete r.groupBgOff[ms.id];
+      });
       state.markStyles.splice(idx(), 1);
       refreshAll();
     }
@@ -1933,12 +2003,38 @@ function renderRowsPanel() {
         rr2.appendChild(sizeField('Text', sliderInput(r.textSize, 8, 40, 0.5, v => { r.textSize = v; rerender(); }, { unit: 'pt' }), { narrow: true }));
         card.appendChild(rr2);
 
+        // Gruppen: direkt aufeinanderfolgende Ereignisse mit derselben Markierungsvorlage (bzw. alle ohne Vorlage)
+        card.appendChild(field('Gruppen hinterlegen', checkInput(r.groupBgOn, v => { r.groupBgOn = v; refreshAll(); })));
+        if (r.groupBgOn) {
+          card.appendChild(gapField('Innenabstand', sliderInput(r.groupBgPad == null ? 4 : r.groupBgPad, 0, 20, 0.5, v => { r.groupBgPad = Math.max(0, v); rerender(); }, { unit: 'px' })));
+          r.groupBgColors = r.groupBgColors || {}; r.groupBgOff = r.groupBgOff || {};
+          const keys = [];
+          r.items.forEach(it => { const k = findMarkStyle(state, it.styleId) ? it.styleId : ''; if (!keys.includes(k)) keys.push(k); });
+          keys.forEach(k => {
+            const tpl = k ? findMarkStyle(state, k) : null;
+            const line = el('div', { class: 'row group-bg-row' });
+            line.appendChild(checkInput(!r.groupBgOff[k], v => { if (v) delete r.groupBgOff[k]; else r.groupBgOff[k] = true; rerender(); }));
+            line.appendChild(markStyleSwatch(tpl || { fill: r.color, border: null, borderWidth: 0 }, 14));
+            line.appendChild(el('span', { class: 'group-bg-name' }, [tpl ? (tpl.name || 'Vorlage') : 'Zeilenstandard']));
+            line.appendChild(colorInput(r.groupBgColors[k] || groupBgDefaultColor(tpl, r.color), v => { r.groupBgColors[k] = v; rerender(); }));
+            card.appendChild(line);
+          });
+          card.appendChild(el('div', { class: 'hint small' }, ['Hintergrund erscheint ab zwei direkt aufeinanderfolgenden Ereignissen mit gleicher Darstellung; die Beschriftung darunter bleibt außerhalb.']));
+        }
+
         card.appendChild(el('div', { class: 'section-title small' }, ['Einträge (Tag / Beschriftung)']));
         const table = el('div', { class: 'point-table events' });
         r.items.forEach((it, ii) => {
           const row = el('div', { class: 'point-row events' });
           row.appendChild(numInput(it.day, v => { it.day = v; rerender(); }));
           row.appendChild(textAreaInput(it.label, v => { it.label = v; rerender(); }));
+          const tplNow = findMarkStyle(state, it.styleId);
+          const styleBtn = el('button', {
+            class: 'icon-btn small', title: 'Markierungsvorlage und Markierungslinie dieses Ereignisses',
+            onclick: (e) => { const rc = e.currentTarget.getBoundingClientRect(); openEventPopover(r, it, rc.left + rc.width / 2, rc.top); }
+          }, []);
+          styleBtn.appendChild(markStyleSwatch(tplNow || { fill: r.color, border: it.hl ? '#1E2A24' : null, borderWidth: 1.5 }, 14));
+          row.appendChild(styleBtn);
           row.appendChild(el('button', { class: 'icon-btn danger small', onclick: () => { r.items.splice(ii, 1); refreshAll(); } }, ['✕']));
           table.appendChild(row);
         });
@@ -1971,6 +2067,11 @@ function renderRowsPanel() {
         }, ['+ Zyklus']));
       } else {
         card.appendChild(field('Bezeichnung', textInput(r.name, v => { r.name = v; rerender(); })));
+        card.appendChild(field('Lücken zwischen Zuständen', selectInput(r.gapMode || 'auto', [
+          { value: 'auto', label: 'Automatisch schließen (Lücke bis 1 Tag)' },
+          { value: 'whole', label: 'Nur bei ganzen, direkt folgenden Tagen (19 → 20)' },
+          { value: 'never', label: 'Nie schließen (exakte Positionen)' }
+        ], v => { r.gapMode = v; rerender(); })));
 
         card.appendChild(el('div', { class: 'section-title small' }, ['Einträge (Farbe / Von / Bis / Beschriftung)']));
         const table = el('div', { class: 'point-table states' });

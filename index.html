@@ -176,7 +176,10 @@
 
   .point-table{display:flex;flex-direction:column;gap:5px;max-height:260px;overflow-y:auto;padding-right:2px;}
   .point-row{display:grid;grid-template-columns:1fr 1fr 22px;gap:6px;align-items:center;}
-  .point-row.events{grid-template-columns:70px 1fr 22px;align-items:start;}
+  .point-row.events{grid-template-columns:70px 1fr 24px 22px;align-items:start;}
+  .group-bg-row{align-items:center;gap:8px;padding:2px 0;}
+  .group-bg-row .group-bg-name{flex:1;font-size:12px;}
+  .group-bg-row input[type=color]{width:44px;height:24px;padding:1px;}
   .point-row.states{grid-template-columns:34px 1fr 1fr 1fr 22px;align-items:start;}
   .point-row input{padding:5px 6px;font-size:12px;}
   .label-textarea{width:100%;box-sizing:border-box;padding:5px 6px;font-size:12px;font-family:var(--sans);border:1px solid var(--border);border-radius:5px;resize:vertical;min-height:30px;}

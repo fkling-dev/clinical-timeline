@@ -1655,6 +1655,10 @@ const CHART_TEMPLATES = [
   { id: 'therapy', name: 'Therapieplan Verlauf', build: () => migrateState(JSON.parse(JSON.stringify(THERAPY_PLAN_TEMPLATE))) }
 ];
 
+// Standardfarbe fuer den Hintergrund einer Ereignisgruppe: helle Variante der Vorlagen-/Zeilenfarbe.
+function groupBgDefaultColor(tpl, rowColor) {
+  return lighten((tpl && (tpl.border || tpl.fill)) || rowColor || '#C1461F', 0.8);
+}
 function findMarkStyle(s, id) {
   if (!id) return null;
   return (s.markStyles || []).find(ms => ms.id === id) || null;
@@ -1967,6 +1971,10 @@ function migrateState(data) {
         if (it.hlColor == null) it.hlColor = r.color || '#C1461F';
         if (it.hlLabel == null) it.hlLabel = '';
       });
+      if (r.groupBgOn == null) r.groupBgOn = false;
+      if (r.groupBgPad == null) r.groupBgPad = 4;
+      if (!r.groupBgColors || typeof r.groupBgColors !== 'object') r.groupBgColors = {};
+      if (!r.groupBgOff || typeof r.groupBgOff !== 'object') r.groupBgOff = {};
     }
     if (r.kind === 'values') {
       if (!Array.isArray(r.points)) r.points = [];
@@ -1979,6 +1987,7 @@ function migrateState(data) {
       ensureValueIds(r);
     }
     if (r.kind === 'state') {
+      if (r.gapMode !== 'whole' && r.gapMode !== 'never') r.gapMode = 'auto';
       r.items.forEach(it => {
         if (it.hatch == null) it.hatch = false;
         if (!Array.isArray(it.marks)) it.marks = [];
@@ -2050,6 +2059,12 @@ function migrateState(data) {
   // Verweise auf nicht (mehr) existierende Vorlagen entfernen.
   const msIds = new Set(data.markStyles.map(ms => ms.id));
   (data.series || []).forEach(sr => (sr.points || []).forEach(pt => { if (pt.styleId && !msIds.has(pt.styleId)) delete pt.styleId; }));
+  (data.rows || []).forEach(r => {
+    if (r.kind !== 'event') return;
+    (r.items || []).forEach(it => { if (it.styleId && !msIds.has(it.styleId)) delete it.styleId; });
+    Object.keys(r.groupBgColors || {}).forEach(k => { if (k && !msIds.has(k)) delete r.groupBgColors[k]; });
+    Object.keys(r.groupBgOff || {}).forEach(k => { if (k && !msIds.has(k)) delete r.groupBgOff[k]; });
+  });
   (data.series || []).forEach(sr => {
     if (!SERIES_MODES.some(m => m.value === sr.displayMode)) sr.displayMode = 'lineMarkers';
     if (!sr.aucFill) sr.aucFill = sr.color || '#1F6FB2';
@@ -2218,11 +2233,16 @@ function annotationExtras(it) {
 }
 // Sammelt die Markierungsvorlagen mit Beschriftungstext, die an mindestens einem
 // sichtbaren Messpunkt verwendet werden (Reihenfolge wie im Vorlagen-Reiter).
-function collectStyleLegend(s, series, dayVisible) {
+function collectStyleLegend(s, series, dayVisible, rows) {
   const used = new Set();
   series.forEach(sr => (sr.points || []).forEach(p => {
     if (p.styleId && isFinite(p.day) && isFinite(p.value) && dayVisible(Number(p.day))) used.add(p.styleId);
   }));
+  // Ereignisse mit eigener Markierungsvorlage (nur sichtbare Zeilen/Ereignisse)
+  (rows || []).forEach(r => {
+    if (r.kind !== 'event' || r.visible === false) return;
+    (r.items || []).forEach(it => { if (it.styleId && isFinite(it.day) && dayVisible(Number(it.day))) used.add(it.styleId); });
+  });
   return (s.markStyles || [])
     .filter(ms => used.has(ms.id) && String(ms.label || '').trim())
     .map(ms => ({ kind: 'style', label: ms.label, fill: ms.fill, border: ms.border, borderWidth: ms.borderWidth }));
@@ -2434,7 +2454,7 @@ function computeLayoutAtWidth(s, W, extraX) {
   const preDayVisible = (d) => activeSegs.some(sg => d >= Number(sg.start) && d <= Number(sg.end));
   // Legendeneintraege der Markierungsvorlagen (Quadrat + Text) - stehen in der Liste
   // hinter den nummerierten Markierungslinien.
-  const styleLegend = showMarkersSection ? collectStyleLegend(s, visibleSeries, preDayVisible) : [];
+  const styleLegend = showMarkersSection ? collectStyleLegend(s, visibleSeries, preDayVisible, visibleRows) : [];
 
   const labeledPre = [];
   if (showMarkersSection) {
@@ -2880,9 +2900,35 @@ function computeLayoutAtWidth(s, W, extraX) {
       const visibleItems = r.items.filter(it => isDayVisible(it.day));
       hiddenCount += r.items.length - visibleItems.length;
       const items = visibleItems.map(it => Object.assign({}, it, {
-        x: dayToX(it.day), symbol: r.symbol, color: it.colorOverride || r.color, textSize: r.textSize, symbolSize: r.symbolSize
+        x: dayToX(it.day), symbol: r.symbol, color: it.colorOverride || r.color, textSize: r.textSize, symbolSize: r.symbolSize,
+        tpl: findMarkStyle(s, it.styleId)
       }));
-      return Object.assign({}, frame, { type: r.name, rowId: r.id, items, isCycle: !!r.isCycle });
+      // Hintergrund fuer Gruppen: direkt aufeinanderfolgende Ereignisse (nach Tag sortiert) mit derselben
+      // Markierungsvorlage (bzw. alle ohne Vorlage = Zeilenstandard). Nur Symbole werden eingefasst,
+      // die Beschriftung darunter nicht; mindestens 2 Ereignisse bilden eine Gruppe.
+      const groups = [];
+      if (r.groupBgOn && !r.isCycle) {
+        const sortedIt = [...items].sort((a, b) => (a.day - b.day) || (a.x - b.x));
+        const keyOf = it => (it.tpl ? it.tpl.id : '');
+        const halfY = (Number(r.symbolSize) || 14) * FS / 2;
+        const halfX = r.symbol === 'doublecross' ? halfY * 2.18 : halfY;
+        const pad = Math.max(0, r.groupBgPad == null ? 4 : Number(r.groupBgPad) || 0) * FS;
+        let run = [];
+        const flush = () => {
+          if (run.length >= 2) {
+            const key = keyOf(run[0]);
+            if (!(r.groupBgOff || {})[key]) {
+              const xs = run.map(i => i.x);
+              const col = (r.groupBgColors || {})[key] || groupBgDefaultColor(run[0].tpl, r.color);
+              groups.push({ key, color: col, x0: Math.min.apply(null, xs) - halfX - pad, x1: Math.max.apply(null, xs) + halfX + pad, y0: frame.center - halfY - pad, y1: frame.center + halfY + pad, rx: Math.min(6 * FS, pad + 2 * FS) });
+            }
+          }
+          run = [];
+        };
+        sortedIt.forEach(it => { if (run.length && keyOf(run[0]) !== keyOf(it)) flush(); run.push(it); });
+        flush();
+      }
+      return Object.assign({}, frame, { type: r.name, rowId: r.id, items, isCycle: !!r.isCycle, groups });
     }
     if (r.kind === 'values') {
       ensureValueIds(r);
@@ -2926,14 +2972,20 @@ function computeLayoutAtWidth(s, W, extraX) {
     const withPieces = r.items.map(it => Object.assign({}, it, { pieces: segmentPieces(it.start, it.end) }));
     hiddenCount += withPieces.filter(it => it.pieces.length === 0).length;
     const sorted = [...withPieces].sort((a, b) => a.start - b.start);
+    const gapMode = (r.gapMode === 'whole' || r.gapMode === 'never') ? r.gapMode : 'auto';
+    const isWholeDay = v => Math.abs(v - Math.round(v)) < 1e-9;
     for (let i = 0; i < sorted.length - 1; i++) {
       const a = sorted[i], b = sorted[i + 1];
       if (!a.pieces.length || !b.pieces.length) continue;
       const lastPiece = a.pieces[a.pieces.length - 1];
       const firstPiece = b.pieces[0];
       const gapDays = b.start - a.end;
-      if (gapDays > 0 && gapDays <= 1.001 && lastPiece.segIdx === firstPiece.segIdx) {
-        lastPiece.x1 = firstPiece.x0;
+      // Zeilenweise einstellbar (r.gapMode): auto = Luecke bis 1 Tag schliessen (bisheriges Verhalten),
+      // whole = nur bei ganzzahligen, direkt aufeinanderfolgenden Tagen (z. B. 19 -> 20), never = nie.
+      if (gapMode !== 'never' && gapDays > 0 && gapDays <= 1.001 && lastPiece.segIdx === firstPiece.segIdx) {
+        if (gapMode === 'auto' || (isWholeDay(a.end) && isWholeDay(b.start) && Math.abs(gapDays - 1) < 1e-9)) {
+          lastPiece.x1 = firstPiece.x0;
+        }
       }
     }
     const items = withPieces.filter(it => it.pieces.length > 0);
@@ -2969,7 +3021,7 @@ function computeLayoutAtWidth(s, W, extraX) {
           if (it.hl) {
             const topGap = it.symbolSize * FS / 2 + badgeR + 4;
             annotations.push({
-              itemId: it.id, x: it.x, day: it.day, color: it.hlColor || it.color, label: it.hlLabel || '',
+              itemId: it.id, x: it.x, day: it.day, color: it.tpl ? (it.tpl.border || it.tpl.fill || it.color) : (it.hlColor || it.color), label: it.hlLabel || '',
               fromY: row.center - topGap
             });
           }
@@ -3332,10 +3384,13 @@ function renderSVG(s) {
     if (row.kind === 'event') {
       g.push(`<text x="${L.plotLeft - s.rowLabelGap}" y="${row.center + 4}" text-anchor="end" font-size="${F(s.rowLabelSize)}" font-style="${rlAttrs.fontStyle}" font-weight="${rlAttrs.fontWeight}" fill="#1E2A24">${esc(row.type)}</text>`);
       if (showRowLine('event')) g.push(`<line x1="${L.plotLeft}" y1="${row.center}" x2="${L.plotRight}" y2="${row.center}" stroke="#E7EAE7" stroke-width="1"/>`);
+      (row.groups || []).forEach(gr => {
+        g.push(`<rect x="${gr.x0}" y="${gr.y0}" width="${gr.x1 - gr.x0}" height="${gr.y1 - gr.y0}" rx="${gr.rx}" ry="${gr.rx}" fill="${gr.color}" style="pointer-events:none;"/>`);
+      });
       row.items.forEach(it => {
-        const col = it.hl ? (it.hlColor || it.color) : it.color;
+        const col = it.tpl ? (it.tpl.fill || it.color) : (it.hl ? (it.hlColor || it.color) : it.color);
         g.push(`<g data-kind="${row.isCycle ? 'cycle' : 'event'}" data-row-id="${row.rowId}" data-item-id="${it.id}" class="clickable-item">`);
-        g.push(symbolSVG(it.symbol, it.x, row.center, it.symbolSize * FS, col));
+        g.push(symbolSVG(it.symbol, it.x, row.center, it.symbolSize * FS, col, it.tpl ? markStyleStroke(it.tpl) : null));
         g.push(richTextSVG(it.label, it.x, row.center + it.symbolSize * FS * 0.6 + it.textSize * FS * 0.9 + 4, {
           anchor: 'middle', fontSize: F(it.textSize), fontWeight: it.hl ? 700 : 400, fill: '#1E2A24', lineH: it.textSize * FS * 1.25
         }));
@@ -3677,6 +3732,7 @@ async function exportPPTX() {
 
   const CUSTGEOM = (pptx.ShapeType && pptx.ShapeType.custGeom) || 'custGeom';
   const RECT = (pptx.ShapeType && pptx.ShapeType.rect) || 'rect';
+  const ROUNDRECT = (pptx.ShapeType && pptx.ShapeType.roundRect) || 'roundRect';
   const OVAL = (pptx.ShapeType && pptx.ShapeType.ellipse) || 'ellipse';
   const TRIANGLE = (pptx.ShapeType && pptx.ShapeType.triangle) || 'triangle';
   const DIAMOND = (pptx.ShapeType && pptx.ShapeType.diamond) || 'diamond';
@@ -4047,9 +4103,13 @@ async function exportPPTX() {
     if (row.kind === 'event') {
       addTextAt(row.type, L.plotLeft - state.rowLabelGap, row.center + 4, { fontSize: state.rowLabelSize, bold: rlAttrs.fontWeight === 700, italic: rlAttrs.fontStyle === 'italic', anchor: 'end' });
       if (showRowLine('event')) addSegmentLine(L.plotLeft, row.center, L.plotRight, row.center, '#E7EAE7', 1);
+      (row.groups || []).forEach(gr => {
+        if (!ok(gr.x0, gr.y0, gr.x1 - gr.x0, gr.y1 - gr.y0)) return;
+        slide.addShape(ROUNDRECT, { x: IN(gr.x0), y: IN(gr.y0), w: IN(gr.x1 - gr.x0), h: IN(gr.y1 - gr.y0), rectRadius: IN(gr.rx), fill: { color: hexColor(gr.color) }, line: { type: 'none' } });
+      });
       row.items.forEach(it => {
-        const col = it.hl ? (it.hlColor || it.color) : it.color;
-        addMarker(it.symbol, it.x, row.center, it.symbolSize * FS, col);
+        const col = it.tpl ? (it.tpl.fill || it.color) : (it.hl ? (it.hlColor || it.color) : it.color);
+        addMarker(it.symbol, it.x, row.center, it.symbolSize * FS, col, it.tpl ? markStyleStroke(it.tpl) : null);
         addRichAt(it.label, it.x, row.center + it.symbolSize * FS * 0.6 + it.textSize * FS * 0.9 + 4,
           { fontPx: Math.round(it.textSize * FS * 10) / 10, bold: it.hl, anchor: 'middle', lineH: it.textSize * FS * 1.25 });
       });
